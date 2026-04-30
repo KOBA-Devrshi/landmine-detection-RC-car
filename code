@@ -1,0 +1,150 @@
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
+// Motor pins
+int IN1 = 14;
+int IN2 = 27;
+int IN3 = 26;
+int IN4 = 25;
+
+// PWM
+int freq = 1000;
+int resolution = 8;
+
+int ch1 = 0;
+int ch2 = 1;
+int ch3 = 2;
+int ch4 = 3;
+
+// Speed control
+int currentSpeed = 0;
+int targetSpeed = 0;
+int turnSpeed = 0;
+
+// Timing
+unsigned long lastCommandTime = 0;
+int timeout = 150;
+
+// Motion state
+char currentCommand = 'S';
+
+// Function declarations
+void applyMotor();
+
+// BLE
+#define SERVICE_UUID        "12345678-1234-1234-1234-1234567890ab"
+#define CHARACTERISTIC_UUID "abcd1234-5678-1234-5678-abcdef123456"
+
+BLECharacteristic *pCharacteristic;
+
+class MyCallbacks: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+
+    std::string value = pCharacteristic->getValue();
+
+    if (value.length() > 0) {
+      currentCommand = value[0];
+      lastCommandTime = millis();
+
+      if (currentCommand == 'F' || currentCommand == 'B') {
+        targetSpeed = 200;
+        turnSpeed = 200;
+      }
+      else if (currentCommand == 'L' || currentCommand == 'R') {
+        targetSpeed = 200;
+        turnSpeed = 80;
+      }
+      else if (currentCommand == 'S') {
+        targetSpeed = 0;
+      }
+    }
+  }
+};
+
+void setup() {
+  Serial.begin(115200);
+
+  ledcSetup(ch1, freq, resolution);
+  ledcSetup(ch2, freq, resolution);
+  ledcSetup(ch3, freq, resolution);
+  ledcSetup(ch4, freq, resolution);
+
+  ledcAttachPin(IN1, ch1);
+  ledcAttachPin(IN2, ch2);
+  ledcAttachPin(IN3, ch3);
+  ledcAttachPin(IN4, ch4);
+
+  BLEDevice::init("LandmineBot_BLE");
+
+  BLEServer *pServer = BLEDevice::createServer();
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_WRITE
+                    );
+
+  pCharacteristic->setCallbacks(new MyCallbacks());
+
+  pService->start();
+  BLEDevice::getAdvertising()->start();
+}
+
+void loop() {
+
+  // Auto stop
+  if (millis() - lastCommandTime > timeout) {
+    targetSpeed = 0;
+    currentCommand = 'S';
+  }
+
+  // Smooth acceleration
+  if (currentSpeed < targetSpeed) currentSpeed += 5;
+  else if (currentSpeed > targetSpeed) currentSpeed -= 5;
+
+  applyMotor();
+
+  delay(20); // smoothness control
+}
+
+// 🚗 APPLY MOTOR LOGIC
+
+void applyMotor() {
+
+  if (currentCommand == 'F') {
+    ledcWrite(ch1, currentSpeed);
+    ledcWrite(ch2, 0);
+    ledcWrite(ch3, currentSpeed);
+    ledcWrite(ch4, 0);
+  }
+
+  else if (currentCommand == 'B') {
+    ledcWrite(ch1, 0);
+    ledcWrite(ch2, currentSpeed);
+    ledcWrite(ch3, 0);
+    ledcWrite(ch4, currentSpeed);
+  }
+
+  else if (currentCommand == 'L') {
+    ledcWrite(ch1, turnSpeed);
+    ledcWrite(ch2, 0);
+    ledcWrite(ch3, currentSpeed);
+    ledcWrite(ch4, 0);
+  }
+
+  else if (currentCommand == 'R') {
+    ledcWrite(ch1, currentSpeed);
+    ledcWrite(ch2, 0);
+    ledcWrite(ch3, turnSpeed);
+    ledcWrite(ch4, 0);
+  }
+
+  else {
+    ledcWrite(ch1, 0);
+    ledcWrite(ch2, 0);
+    ledcWrite(ch3, 0);
+    ledcWrite(ch4, 0);
+  }
+}
